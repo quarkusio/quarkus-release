@@ -1,0 +1,107 @@
+name: Deploy Artifacts to Central
+run-name: Deploy ${{ github.event.inputs.name }} ${{ github.event.inputs.version }} to Central
+on:
+  workflow_dispatch:
+    inputs:
+      name:
+        description: 'Name of the artifact'
+        required: true
+      version:
+        description: 'Version of the artifact'
+        required: true
+      github_repository:
+        description: 'GitHub repository of the artifact'
+        required: true
+      run_id:
+        description: 'Run ID of the release workflow'
+        required: true
+      dry_run:
+        description: 'Dry run the release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  PAYLOAD_NAME: ${{ github.event.inputs.name }}
+  PAYLOAD_VERSION: ${{ github.event.inputs.version }}
+  PAYLOAD_REPOSITORY: ${{ github.event.inputs.github_repository }}
+  PAYLOAD_RUN_ID: ${{ github.event.inputs.run_id }}
+  DRY_RUN: ${{ github.event.inputs.dry_run || vars.DRY_RUN }}
+
+concurrency:
+  # Group by repository and version
+  group: ${{ github.event.inputs.github_repository }}-${{ github.event.inputs.version }}
+  cancel-in-progress: true
+
+jobs:
+  deploy_to_central:
+    environment: central
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set environment variables
+        run: |
+          echo "ARTIFACT_PATH=${PAYLOAD_NAME}-${PAYLOAD_VERSION}.tar.gz" >> $GITHUB_ENV
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: artifact
+          repository: ${{ env.PAYLOAD_REPOSITORY }}
+          run-id: ${{ env.PAYLOAD_RUN_ID }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Artifact Attestation
+        run: gh attestation verify --repo ${PAYLOAD_REPOSITORY} ${ARTIFACT_PATH} --signer-repo quarkusio/.github
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Untar the artifacts
+        run: |
+          mkdir repository
+          tar -xzvf $ARTIFACT_PATH -C repository
+
+      - name: Verify structure
+        uses: jbangdev/jbang-action@v0.125.1
+        with:
+          script: validate_repository.java
+        env:
+          ARTIFACT_DIR: ./repository
+          REPOSITORY: ${{ env.PAYLOAD_REPOSITORY }}
+          NAME: ${{ env.PAYLOAD_NAME }}
+          VERSION: ${{ env.PAYLOAD_VERSION }}
+
+      - name: Deploy to Central
+        uses: jreleaser/release-action@v2
+        with:
+          version: latest
+          arguments: 'deploy'
+        env:
+          JRELEASER_DRY_RUN: ${{ env.DRY_RUN }}
+          JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.GPG_PUBLIC_KEY }}
+          JRELEASER_GPG_SECRET_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          JRELEASER_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          JRELEASER_MAVENCENTRAL_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          JRELEASER_MAVENCENTRAL_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          JRELEASER_NEXUS2_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+          JRELEASER_NEXUS2_TOKEN: ${{ secrets.SONATYPE_PASSWORD }}
+          JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JRELEASER_PROJECT_VERSION: ${{ env.PAYLOAD_VERSION }}
+          JRELEASER_PROJECT_NAME: ${{ env.PAYLOAD_NAME }}
+      # Persist logs
+      - name: JReleaser release output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jreleaser-logs
+          path: |
+            out/jreleaser/trace.log
+            out/jreleaser/output.properties

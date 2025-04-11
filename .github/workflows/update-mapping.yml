@@ -1,0 +1,40 @@
+name: Update Mapping
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: write
+
+jobs:
+  update_mapping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install XMLLint
+        run: |
+          sudo apt-get install libxml2-utils
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure Git author
+        run: |
+          git config --local user.name "GitHub Action"
+          git config --local user.email "action@github.com"
+
+      - name: Update mapping
+        run: |
+          ./generate_mapping.sh
+          if [[ `git status --porcelain` ]]; then
+            git commit -a -m "Update mapping.properties"
+            git push
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

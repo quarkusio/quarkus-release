@@ -21,8 +21,18 @@ jobs:
       - name: Install XMLLint
         run: |
           sudo apt-get install libxml2-utils
+
+      - uses: actions/create-github-app-token@v3
+        id: app-token
+        name: Create GitHub App Token
+        with:
+          app-id: ${{ vars.CI_APP_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          
       - name: Checkout code
         uses: actions/checkout@v6
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Configure Git author
         run: |
@@ -37,4 +47,4 @@ jobs:
             git push
           fi
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
